@@ -9,15 +9,15 @@ class PathFollower(Node):
     def __init__(self):
         super().__init__('path_follower')
 
-        self.lookahead = 0.25          # meters ahead on the path to aim at
-        self.goal_tolerance = 0.01     # stop when within 10 cm of final waypoint
-        self.v_max = 0.25              # m/s forward speed
-        self.w_max = 1.0               # rad/s max angular speed
-        self.k_ang = 1.5               # P-gain on heading error
-        self.turn_in_place_thresh = math.radians(30)  # if off by >30°, rotate in place
+        self.lookahead = 0.25          #meters ahead on the path to aim at
+        self.goal_tolerance = 0.01     #stop within 1 cm of final waypoint
+        self.v_max = 0.25              #m/s forward speed
+        self.w_max = 1.0               #rad/s max angular speed
+        self.k_ang = 1.5               #P-gain on heading error
+        self.turn_in_place_thresh = math.radians(30)  #if off by >30°, rotate in place
 
-        self.path = []                 # list of (x, y)
-        self.path_idx = 0              # index of the waypoint we're currently tracking
+        self.path = []                 #list of (x, y)
+        self.path_idx = 0              #index of the waypoint we're currently tracking
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -25,7 +25,7 @@ class PathFollower(Node):
         self.create_subscription(Path, '/planned_path', self.path_cb, 10)
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
 
-        self.create_timer(0.05, self.control_tick)  # 20 Hz
+        self.create_timer(0.05, self.control_tick)  #20 Hz
 
     def path_cb(self, msg: Path):
         self.path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
@@ -41,7 +41,7 @@ class PathFollower(Node):
         x = t.transform.translation.x
         y = t.transform.translation.y
         q = t.transform.rotation
-        # quaternion -> yaw (rotation about z)
+        #quaternion yaw calculation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return x, y, yaw
@@ -54,15 +54,15 @@ class PathFollower(Node):
             return
         rx, ry, ryaw = pose
 
-        # --- have we reached the final goal? ---
+        # goal detector
         gx, gy = self.path[-1]
         if math.hypot(gx - rx, gy - ry) < self.goal_tolerance:
-            self.cmd_pub.publish(TwistStamped())   # zeros = stop
-            self.path = []                  # clear so we don't keep firing
+            self.cmd_pub.publish(TwistStamped())   
+            self.path = []                  
             self.get_logger().info('Goal reached')
             return
 
-        # --- advance path_idx past any waypoints that are behind/too close ---
+        #advance path_idx past any waypoints that are behind/too close
         while self.path_idx < len(self.path) - 1:
             wx, wy = self.path[self.path_idx]
             if math.hypot(wx - rx, wy - ry) < self.lookahead:
@@ -71,17 +71,17 @@ class PathFollower(Node):
                 break
         tx, ty = self.path[self.path_idx]
 
-        # --- compute heading error ---
+        #heading error
         target_angle = math.atan2(ty - ry, tx - rx)
         err = self.wrap(target_angle - ryaw)
 
         cmd = TwistStamped()
         if abs(err) > self.turn_in_place_thresh:
-            # Off-heading — rotate in place
+            #Off-heading — rotate in place
             cmd.twist.linear.x = 0.0
             cmd.twist.angular.z = max(-self.w_max, min(self.w_max, self.k_ang * err))
         else:
-            # Roughly pointed right — drive and steer
+            #Roughly pointed right — drive and steer
             cmd.twist.linear.x = self.v_max
             cmd.twist.angular.z = max(-self.w_max, min(self.w_max, self.k_ang * err))
         self.cmd_pub.publish(cmd)
