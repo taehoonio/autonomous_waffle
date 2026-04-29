@@ -25,10 +25,10 @@ class PathFollower(Node):
         self.create_subscription(Path, '/planned_path', self.path_cb, 10)
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
 
-        self.create_timer(0.05, self.control_tick)  #20 Hz
+        self.create_timer(0.05, self.control_tick)  #Translation calculation and movement command generation at 20Hz
 
     def path_cb(self, msg: Path):
-        self.path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
+        self.path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses] #list of x,y poses
         self.path_idx = 0
         self.get_logger().info(f'Got new path with {len(self.path)} waypoints')
 
@@ -40,44 +40,51 @@ class PathFollower(Node):
             return None
         x = t.transform.translation.x
         y = t.transform.translation.y
-        q = t.transform.rotation
+        q = t.transform.rotation #rotation data extraction
         #quaternion yaw calculation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), #yaw extraction formula
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return x, y, yaw
 
     def control_tick(self):
-        if not self.path:
+        #no path check
+        if not self.path: 
             return
-        pose = self.get_robot_pose()
-        if pose is None:
-            return
-        rx, ry, ryaw = pose
+        
+        pose = self.get_robot_pose() #get robot position
 
-        # goal detector
-        gx, gy = self.path[-1]
+        #robot position exists check
+        if pose is None: 
+            return
+        
+        rx, ry, ryaw = pose #parse out robot x,y,yaw
+
+        # goal detector - 
+        gx, gy = self.path[-1] #the goal is the last xy coordinate in the list
+
+        #checking if the goal is within tolerance range; "if within 1 cm of goal, stop"
         if math.hypot(gx - rx, gy - ry) < self.goal_tolerance:
-            self.cmd_pub.publish(TwistStamped())   
+            self.cmd_pub.publish(TwistStamped())   #TwistStamped is message type /cmd_vel recieves
             self.path = []                  
             self.get_logger().info('Goal reached')
             return
 
-        #advance path_idx past any waypoints that are behind/too close
+        #advance ignore waypoints that are too close/behind and get next waypoint
         while self.path_idx < len(self.path) - 1:
             wx, wy = self.path[self.path_idx]
-            if math.hypot(wx - rx, wy - ry) < self.lookahead:
+            if math.hypot(wx - rx, wy - ry) < self.lookahead: #if waypoint is less than 0.25m away, get the next waypoint instead
                 self.path_idx += 1
             else:
                 break
         tx, ty = self.path[self.path_idx]
 
-        #heading error
+        #heading error - angle delta between path velocity and current facing
         target_angle = math.atan2(ty - ry, tx - rx)
         err = self.wrap(target_angle - ryaw)
 
         cmd = TwistStamped()
         if abs(err) > self.turn_in_place_thresh:
-            #Off-heading — rotate in place
+            #Off-heading (more than 30 deg) — rotate in place
             cmd.twist.linear.x = 0.0
             cmd.twist.angular.z = max(-self.w_max, min(self.w_max, self.k_ang * err))
         else:
